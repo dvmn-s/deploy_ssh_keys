@@ -1,0 +1,60 @@
+- name: Manage SSH keys via Vault
+  hosts: "{{ group }}"
+  gather_facts: false
+  become: true
+  vars:
+    vault_addr: "https://vlt.domain.name"
+    vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+    user_access_group: "{{ keys }}"
+
+    # Путь к ключам администраторов
+    vault_paths_admins:
+      - "secrets/data/ssh_keys/admins"
+
+    # Путь к ключам разработчиков
+    vault_paths_developers:
+      - "secrets/data/ssh_keys/developers"
+
+  tasks:
+    - name: Set vault paths based on group
+      set_fact:
+        vault_paths: "{{ vault_paths_admins + (vault_paths_developers if group == 'dev' else []) }}"
+
+    - name: Get SSH keys from Vault (admins and developers)
+      set_fact:
+        keys_from_vault: "{{ lookup('hashi_vault', 'secret=' ~ item, token=vault_token, url=vault_addr) }}"
+      loop: "{{ vault_paths }}"
+      register: vault_keys
+
+    - name: Extract actual data from Vault response
+      set_fact:
+        actual_keys: "{{ vault_keys.results | map(attribute='ansible_facts.keys_from_vault') | map('dict2items') | flatten | map(attribute='value') | unique }}"
+
+    - name: Get existing authorized keys
+      slurp:
+        src: "/root/.ssh/authorized_keys"
+      register: current_keys
+      ignore_errors: yes
+
+    - name: Process existing keys
+      set_fact:
+        current_keys_clean: "{{ (current_keys.content | b64decode).split('\n') | select('match', '^ssh-') | list }}"
+      when: current_keys is not failed
+
+    - name: Remove outdated keys (for all groups)
+      authorized_key:
+        user: root
+        state: absent
+        key: "{{ item }}"
+      loop: "{{ current_keys_clean | default([]) }}"
+      when:
+        - item not in actual_keys
+        - current_keys_clean is defined
+
+    - name: Deploy combined keys
+      authorized_key:
+        user: root
+        state: present
+        key: "{{ item }}"
+      loop: "{{ actual_keys | unique }}"
+      when: actual_keys | length > 0

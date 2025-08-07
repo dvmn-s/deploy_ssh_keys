@@ -1,0 +1,24 @@
+- name: Get SSH keys from Vault
+  hosts: localhost
+  gather_facts: false
+  vars:
+    vault_addr: "https://vlt.domain.name"
+    vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"  # Токен Vault
+    vault_path: "secrets/data/ssh_keys/admins"  # Путь к данным
+
+  tasks:
+    - name: Get SSH keys from Vault
+      set_fact:
+        keys_from_vault: "{{ lookup('hashi_vault', 'secret=' ~ vault_path, token=vault_token, url=vault_addr) }}"
+
+    - name: Show the raw response from vault
+      debug:
+        msg: "{{ keys_from_vault }}"
+
+    - name: Extract actual data from vault response
+      set_fact:
+        actual_keys: "{{ keys_from_vault.data.keys | default([]) }}"
+
+    - name: Show extracted SSH keys
+      debug:
+        msg: "{{ actual_keys }}"
